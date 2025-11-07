@@ -48,5 +48,8 @@ test_built*.py
 
 # Temporary files
 *.tmp
-*.log
 *.bak
+
+# Logs directory
+Logs/
+*.log

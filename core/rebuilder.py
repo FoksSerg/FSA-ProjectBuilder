@@ -87,6 +87,11 @@ class Rebuilder:
             print("[ERROR] Ошибка сохранения метаданных")
             return False
         
+        # 6. Создаем файл запуска
+        print("[REBUILD] Создание файла запуска...")
+        if not self._generate_launcher_file():
+            print("[WARNING] Не удалось создать файл запуска (не критично)")
+        
         print(f"[SUCCESS] Разборка завершена успешно!")
         print(f"[INFO] Модули созданы в: {self.target_dir}")
         return True
@@ -390,6 +395,111 @@ class Rebuilder:
             return True
         except Exception as e:
             print(f"[ERROR] Ошибка сохранения метаданных: {e}")
+            return False
+    
+    def _generate_launcher_file(self) -> bool:
+        """Генерация файла запуска разобранного проекта"""
+        try:
+            # Определяем имя файла запуска
+            source_name_without_ext = os.path.splitext(self.source_name)[0]
+            launcher_name = f"{source_name_without_ext}_run.py"
+            
+            # Создаем файл в корне проекта (рядом с исходным файлом)
+            launcher_path = os.path.join(self.source_dir, launcher_name)
+            
+            # Определяем относительный путь к директории модулей
+            # Если модули в той же директории, что и исходный файл
+            if os.path.dirname(self.target_dir) == self.source_dir:
+                # Модули в поддиректории (например, modules/)
+                modules_rel_path = os.path.basename(self.target_dir)
+            else:
+                # Модули в другой директории - используем абсолютный путь
+                modules_rel_path = self.target_dir
+            
+            # Генерируем код файла запуска
+            launcher_code = f'''#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Файл запуска разобранного проекта
+Автоматически сгенерирован FSA-ProjectBuilder
+Исходный файл: {self.source_name}
+"""
+
+from __future__ import print_function
+import sys
+import os
+
+# Добавляем путь к модулям в sys.path
+modules_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "{modules_rel_path}")
+if os.path.exists(modules_dir):
+    sys.path.insert(0, modules_dir)
+else:
+    # Если модули в другой директории, используем абсолютный путь
+    modules_dir = r"{self.target_dir}"
+    if os.path.exists(modules_dir):
+        sys.path.insert(0, modules_dir)
+    else:
+        print(f"[ERROR] Директория модулей не найдена: {{modules_dir}}")
+        sys.exit(1)
+
+# Импортируем главный модуль
+try:
+    # Пытаемся импортировать из config.py (константы)
+    from config import *
+except ImportError:
+    pass
+
+# Пытаемся импортировать из imports.py (импорты)
+try:
+    from imports import *
+except ImportError:
+    pass
+
+# Пытаемся найти и запустить главную функцию или класс
+try:
+    # Ищем функцию main()
+    if 'main' in globals() and callable(main):
+        main()
+    elif 'Main' in globals():
+        # Ищем класс Main
+        main_class = globals()['Main']
+        if hasattr(main_class, 'run'):
+            main_class().run()
+        elif hasattr(main_class, '__call__'):
+            main_class()()
+    else:
+        # Пытаемся импортировать все модули
+        print("[INFO] Запуск разобранного проекта...")
+        print(f"[INFO] Модули загружены из: {{modules_dir}}")
+        print("[INFO] Если нужно запустить конкретную функцию, добавьте её вызов здесь")
+        
+except NameError as e:
+    print(f"[WARNING] Не найдена точка входа для запуска: {{e}}")
+    print("[INFO] Импортируйте и вызовите нужную функцию или класс вручную")
+except Exception as e:
+    print(f"[ERROR] Ошибка при запуске: {{e}}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+'''
+            
+            # Сохраняем файл
+            with open(launcher_path, 'w', encoding='utf-8') as f:
+                f.write(launcher_code)
+            
+            # Делаем файл исполняемым (на Unix-системах)
+            try:
+                os.chmod(launcher_path, 0o755)
+            except:
+                pass  # Игнорируем ошибки на Windows
+            
+            print(f"[REBUILD] Файл запуска создан: {launcher_path}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка создания файла запуска: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
 

@@ -11,6 +11,7 @@ from __future__ import print_function
 import os
 import json
 import re
+import time
 from typing import Dict, List, Optional, Any
 from .dependency_resolver import DependencyResolver
 from config import DEFAULT_MODULES_DIR, DEFAULT_METADATA_DIR, BUILD_CONFIG
@@ -152,6 +153,11 @@ class Builder:
                 self.modules_order.extend(sorted(remaining))
             
             print(f"[BUILD] Найдено модулей: {len(self.modules_order)}")
+            if len(self.modules_order) == 0:
+                print(f"[WARNING] Модули не найдены в директории: {self.modules_dir}")
+                print(f"[WARNING] Проверьте, что директория содержит .py файлы (кроме __init__.py)")
+            else:
+                print(f"[BUILD] Модули для сборки: {self.modules_order[:5]}...")  # Показываем первые 5
             return True
         except Exception as e:
             print(f"[ERROR] Ошибка определения порядка: {e}")
@@ -162,6 +168,13 @@ class Builder:
     def _collect_code_parts(self) -> List[Dict[str, Any]]:
         """Сборка частей кода из модулей"""
         code_parts = []
+        
+        if not self.modules_order:
+            print("[WARNING] Список модулей пуст, нечего собирать")
+            print("[WARNING] Проверьте, что директория содержит .py файлы (кроме __init__.py)")
+            return code_parts
+        
+        print(f"[BUILD] Сборка кода из {len(self.modules_order)} модулей...")
         
         for module_path in self.modules_order:
             full_path = os.path.join(self.modules_dir, module_path)
@@ -256,6 +269,13 @@ class Builder:
 
 '''
         
+        if not code_parts:
+            print("[WARNING] Нет частей кода для объединения, возвращаем только заголовок")
+            print("[WARNING] Проверьте, что в директории есть .py файлы (кроме __init__.py)")
+            return header
+        
+        print(f"[BUILD] Объединение {len(code_parts)} частей кода...")
+        
         # Собираем все уникальные импорты
         all_imports = []
         seen_imports = set()
@@ -300,18 +320,31 @@ class Builder:
             combined += '\n'.join(third_party_imports) + '\n\n'
         
         # Добавляем код из модулей
+        code_sections = 0
+        total_code_length = 0
         for part in code_parts:
             # Удаляем локальные импорты из кода
             code = part['code']
             code = re.sub(r'^from \. import .*$', '', code, flags=re.MULTILINE)
             code = re.sub(r'^from \.\w+ import .*$', '', code, flags=re.MULTILINE)
             
-            # Добавляем разделитель
-            combined += f"\n# ============================================================================\n"
-            combined += f"# {part['path']}\n"
-            combined += f"# ============================================================================\n\n"
-            combined += code + '\n\n'
+            if code.strip():  # Проверяем, что код не пустой
+                # Добавляем разделитель
+                combined += f"\n# ============================================================================\n"
+                combined += f"# {part['path']}\n"
+                combined += f"# ============================================================================\n\n"
+                combined += code + '\n\n'
+                code_sections += 1
+                total_code_length += len(code)
+            else:
+                print(f"[WARNING] Модуль {part['path']} не содержит кода (только импорты)")
         
+        if code_sections == 0:
+            print("[WARNING] Код из модулей не найден, файл будет содержать только заголовок и импорты")
+        else:
+            print(f"[BUILD] Добавлено {code_sections} секций кода, всего {total_code_length} символов")
+        
+        print(f"[BUILD] Итоговый размер файла: {len(combined)} символов")
         return combined
     
     def _apply_config(self, code: str, config: Dict[str, Any]) -> str:
@@ -345,18 +378,84 @@ class Builder:
     def _save_output(self, code: str) -> bool:
         """Сохранение результата"""
         try:
-            # Создаем директорию если нужно
-            output_dir = os.path.dirname(self.output_file)
+            # Проверяем абсолютный путь
+            output_file_abs = os.path.abspath(self.output_file)
+            output_dir = os.path.dirname(output_file_abs)
+            
+            print(f"[BUILD] Сохранение файла: {output_file_abs}")
+            print(f"[BUILD] Директория выходного файла: {output_dir}")
+            print(f"[BUILD] Размер кода: {len(code)} символов")
+            
+            # Проверяем, что директория существует
             if output_dir and not os.path.exists(output_dir):
+                print(f"[BUILD] Создание директории: {output_dir}")
                 os.makedirs(output_dir, exist_ok=True)
+                if not os.path.exists(output_dir):
+                    print(f"[ERROR] Не удалось создать директорию: {output_dir}")
+                    return False
+                print(f"[BUILD] Директория создана: {output_dir}")
+            
+            # Проверяем права на запись
+            if not os.access(output_dir, os.W_OK):
+                print(f"[ERROR] Нет прав на запись в директорию: {output_dir}")
+                return False
             
             # Сохраняем файл
-            with open(self.output_file, 'w', encoding='utf-8') as f:
+            print(f"[BUILD] Запись файла...")
+            with open(output_file_abs, 'w', encoding='utf-8') as f:
                 f.write(code)
             
-            return True
+            # Синхронизируем файловую систему
+            time.sleep(0.1)  # Небольшая задержка для синхронизации
+            
+            # Проверяем, что файл создан
+            if os.path.exists(output_file_abs):
+                file_size = os.path.getsize(output_file_abs)
+                print(f"[BUILD] Файл успешно сохранен: {output_file_abs}")
+                print(f"[BUILD] Размер файла: {file_size} байт")
+                print(f"[BUILD] Файл существует: {os.path.exists(output_file_abs)}")
+                print(f"[BUILD] Полный путь: {os.path.abspath(output_file_abs)}")
+                
+                # Дополнительная проверка - читаем файл обратно
+                try:
+                    with open(output_file_abs, 'r', encoding='utf-8') as f:
+                        read_size = len(f.read())
+                    print(f"[BUILD] Размер прочитанного файла: {read_size} символов")
+                    if read_size != len(code):
+                        print(f"[WARNING] Размеры не совпадают: записано {len(code)}, прочитано {read_size}")
+                except Exception as e:
+                    print(f"[WARNING] Не удалось прочитать файл для проверки: {e}")
+                
+                # Проверяем содержимое директории
+                if os.path.exists(output_dir):
+                    files_in_dir = os.listdir(output_dir)
+                    print(f"[BUILD] Файлы в директории: {files_in_dir}")
+                    if os.path.basename(output_file_abs) not in files_in_dir:
+                        print(f"[ERROR] Файл не найден в списке файлов директории!")
+                        print(f"[ERROR] Ищем: {os.path.basename(output_file_abs)}")
+                        print(f"[ERROR] В директории: {files_in_dir}")
+                
+                self.output_file = output_file_abs  # Обновляем путь на абсолютный
+                return True
+            else:
+                print(f"[ERROR] Файл не найден после сохранения: {output_file_abs}")
+                print(f"[ERROR] Директория существует: {os.path.exists(output_dir)}")
+                if os.path.exists(output_dir):
+                    files_in_dir = os.listdir(output_dir)
+                    print(f"[ERROR] Содержимое директории: {files_in_dir}")
+                else:
+                    print(f"[ERROR] Директория не существует: {output_dir}")
+                return False
+            
+        except PermissionError as e:
+            print(f"[ERROR] Ошибка прав доступа при сохранении файла: {e}")
+            print(f"[ERROR] Файл: {self.output_file}")
+            print(f"[ERROR] Директория: {os.path.dirname(os.path.abspath(self.output_file))}")
+            return False
         except Exception as e:
+            import traceback
             print(f"[ERROR] Ошибка сохранения файла: {e}")
+            print(f"[ERROR] Traceback: {traceback.format_exc()}")
             return False
 
 
