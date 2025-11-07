@@ -20,10 +20,11 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environments
 venv/
-ENV/
 env/
+ENV/
+.venv
 
 # IDE
 .vscode/
@@ -31,28 +32,21 @@ env/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Проект
-projects/
-*.built.py
-.metadata/
-*.log
-*.pyc
-
-# Тесты
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
 
-# Документация
-docs/_build/
+# Project specific
+test_modules*/
+test_built*.py
+*.pyc
+*.pyo
 
-# Временные файлы
+# Temporary files
 *.tmp
+*.log
 *.bak
-*.backup
-
