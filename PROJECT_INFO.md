@@ -74,7 +74,14 @@ python rebuild.py --project . --file main.py
 python build.py --project .
 ```
 
-## Контакты
+## Авторы
 
-ООО "НПА Вира-Реалтайм"
+**Фокин Сергей Александрович** (@FoksSerg)
+- Разработчик и создатель проекта
+- Email: foks_serg@mail.ru
+- GitHub: @FoksSerg
+
+**ООО "НПА Вира-Реалтайм"**
+- Компания-разработчик
+
 

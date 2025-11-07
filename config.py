@@ -10,6 +10,10 @@ FSA-ProjectBuilder - Конфигурация проекта
 APP_VERSION = "0.1.0"
 APP_NAME = "FSA-ProjectBuilder"
 APP_DESCRIPTION = "Универсальный инструмент для модуляризации, сборки и создания дистрибутивов Python проектов"
+APP_AUTHOR = "Фокин Сергей Александрович"
+APP_AUTHOR_EMAIL = "foks_serg@mail.ru"
+APP_AUTHOR_GITHUB = "@FoksSerg"
+APP_COMPANY = "ООО \"НПА Вира-Реалтайм\""
 
 # Настройки по умолчанию
 DEFAULT_MODULES_DIR = "modules"
