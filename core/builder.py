@@ -127,28 +127,74 @@ class Builder:
                         all_modules.append(rel_path)
             
             # Если есть метаданные, используем их для определения порядка
-            if self.metadata and 'module_mapping' in self.metadata:
-                # Используем порядок из метаданных
-                # Упрощенная версия - просто сортируем по имени
-                self.modules_order = sorted(all_modules)
+            if self.metadata and 'structure' in self.metadata:
+                # Используем граф зависимостей для определения порядка
+                from .dependency_resolver import DependencyResolver
+                resolver = DependencyResolver(self.metadata['structure'])
+                dependencies = resolver.resolve()
+                load_order = resolver.get_load_order()
+                
+                # Создаем маппинг: имя класса -> путь модуля
+                class_to_module = {}
+                if 'module_mapping' in self.metadata:
+                    # Инвертируем module_mapping: имя класса -> путь модуля
+                    for class_name, module_path in self.metadata['module_mapping'].items():
+                        rel_path = os.path.relpath(module_path, self.modules_dir)
+                        class_to_module[class_name] = rel_path
+                
+                # Определяем порядок модулей на основе порядка классов
+                ordered_modules = []
+                for class_name in load_order:
+                    if class_name in class_to_module:
+                        module_path = class_to_module[class_name]
+                        if module_path in all_modules and module_path not in ordered_modules:
+                            ordered_modules.append(module_path)
+                
+                # Добавляем модули, которых нет в зависимостях
+                for module in all_modules:
+                    if module not in ordered_modules:
+                        ordered_modules.append(module)
+                
+                # Приоритетные файлы всегда первыми (только если они существуют)
+                priority_files = ['config.py', 'imports.py']
+                self.modules_order = []
+                for priority in priority_files:
+                    # Проверяем, существует ли файл в директории модулей
+                    priority_path = os.path.join(self.modules_dir, priority)
+                    if os.path.exists(priority_path) and priority in ordered_modules:
+                        self.modules_order.append(priority)
+                        if priority in ordered_modules:
+                            ordered_modules.remove(priority)
+                
+                # Добавляем остальные модули в порядке зависимостей
+                self.modules_order.extend(ordered_modules)
             else:
-                # Автоматическое определение порядка
-                # Сначала config.py, imports.py, затем по категориям
+                # Автоматическое определение порядка (fallback)
+                # Сначала config.py, imports.py (если существуют), затем по категориям
                 priority_files = ['config.py', 'imports.py']
                 other_modules = [m for m in all_modules if m not in priority_files]
                 
                 self.modules_order = []
                 for priority in priority_files:
-                    if priority in all_modules:
+                    # Проверяем, существует ли файл в директории модулей
+                    priority_path = os.path.join(self.modules_dir, priority)
+                    if os.path.exists(priority_path) and priority in all_modules:
                         self.modules_order.append(priority)
                 
-                # Добавляем остальные модули, отсортированные по категориям
-                category_order = ['core', 'handlers', 'managers', 'gui', 'utils', 'models', 'analyzers', 'logging']
+                # Определяем категории динамически из структуры модулей
+                categories = set()
+                for module in other_modules:
+                    parts = module.split(os.sep)
+                    if len(parts) >= 2:
+                        categories.add(parts[0])
+                
+                # Сортируем категории и добавляем модули по категориям
+                category_order = sorted(categories)
                 for category in category_order:
-                    category_modules = [m for m in other_modules if m.startswith(category + '/')]
+                    category_modules = [m for m in other_modules if m.startswith(category + os.sep)]
                     self.modules_order.extend(sorted(category_modules))
                 
-                # Добавляем остальные модули
+                # Добавляем остальные модули (не в категориях)
                 remaining = [m for m in other_modules if m not in self.modules_order]
                 self.modules_order.extend(sorted(remaining))
             

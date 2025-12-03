@@ -88,18 +88,23 @@ class CodeParser:
     
     def get_classes(self) -> List[Dict[str, Any]]:
         """
-        Извлечение всех классов из файла
-        
-        Returns:
-            List[Dict]: Список классов с информацией
+        Извлечение классов верхнего уровня
+        ВАЖНО: Используем tree.body, а не ast.walk()!
+        AST гарантирует точные границы через lineno и end_lineno
         """
         classes = []
         
         if not self.ast_tree:
             return classes
         
-        for node in ast.walk(self.ast_tree):
+        # Ищем классы ТОЛЬКО верхнего уровня в tree.body
+        # AST гарантирует, что tree.body содержит только верхний уровень
+        for node in self.ast_tree.body:
             if isinstance(node, ast.ClassDef):
+                # AST знает точные границы!
+                start_line = node.lineno
+                end_line = getattr(node, 'end_lineno', start_line)
+                
                 # Получаем базовые классы
                 bases = []
                 for base in node.bases:
@@ -114,9 +119,10 @@ class CodeParser:
                 # Получаем методы класса
                 methods = self._get_class_methods(node)
                 
-                # Получаем строки кода класса
-                start_line = node.lineno
-                end_line = node.end_lineno if hasattr(node, 'end_lineno') else start_line
+                # Извлекаем код ТОЧНО по границам AST
+                # end_line уже 1-based, start_line тоже 1-based
+                # Для среза нужен 0-based, поэтому start_line - 1
+                code = '\n'.join(self.lines[start_line - 1:end_line]) if self.lines else ''
                 
                 classes.append({
                     'name': node.name,
@@ -125,7 +131,7 @@ class CodeParser:
                     'methods': methods,
                     'start_line': start_line,
                     'end_line': end_line,
-                    'code': '\n'.join(self.lines[start_line - 1:end_line]) if self.lines else '',
+                    'code': code,
                     'decorators': [self._get_decorator_name(d) for d in node.decorator_list]
                 })
         
@@ -151,35 +157,48 @@ class CodeParser:
                     if isinstance(item, ast.FunctionDef):
                         class_methods.add(item.name)
         
-        # Ищем функции верхнего уровня
-        for node in ast.walk(self.ast_tree):
+        # Ищем функции верхнего уровня (только в корне модуля, не внутри классов)
+        for node in self.ast_tree.body:
             if isinstance(node, ast.FunctionDef) and node.name not in class_methods:
-                # Проверяем, что функция не внутри класса
-                parent = self._get_parent(node)
-                if not isinstance(parent, ast.ClassDef):
-                    docstring = ast.get_docstring(node)
-                    
-                    # Получаем аргументы
-                    args = [arg.arg for arg in node.args.args]
-                    
-                    start_line = node.lineno
-                    end_line = node.end_lineno if hasattr(node, 'end_lineno') else start_line
-                    
-                    functions.append({
-                        'name': node.name,
-                        'args': args,
-                        'docstring': docstring,
-                        'start_line': start_line,
-                        'end_line': end_line,
-                        'code': '\n'.join(self.lines[start_line - 1:end_line]) if self.lines else '',
-                        'decorators': [self._get_decorator_name(d) for d in node.decorator_list]
-                    })
+                docstring = ast.get_docstring(node)
+                
+                # Получаем аргументы
+                args = [arg.arg for arg in node.args.args]
+                
+                start_line = node.lineno
+                # Используем end_lineno если доступен, иначе вычисляем по AST
+                if hasattr(node, 'end_lineno') and node.end_lineno:
+                    end_line = node.end_lineno
+                else:
+                    # Если end_lineno недоступен, используем последнюю строку тела функции
+                    end_line = start_line
+                    if node.body:
+                        last_node = node.body[-1]
+                        if hasattr(last_node, 'end_lineno') and last_node.end_lineno:
+                            end_line = last_node.end_lineno
+                        elif hasattr(last_node, 'lineno'):
+                            end_line = last_node.lineno
+                
+                # Извлекаем код функции (end_line уже 1-based, поэтому используем end_line без +1)
+                code = '\n'.join(self.lines[start_line - 1:end_line]) if self.lines else ''
+                
+                functions.append({
+                    'name': node.name,
+                    'args': args,
+                    'docstring': docstring,
+                    'start_line': start_line,
+                    'end_line': end_line,
+                    'code': code,
+                    'decorators': [self._get_decorator_name(d) for d in node.decorator_list]
+                })
         
         return functions
     
     def get_constants(self) -> List[Dict[str, Any]]:
         """
         Извлечение констант (переменных верхнего уровня)
+        ВАЖНО: Используем AST напрямую - он знает точные границы!
+        AST гарантирует, что tree.body содержит только верхний уровень
         
         Returns:
             List[Dict]: Список констант с информацией
@@ -189,51 +208,119 @@ class CodeParser:
         if not self.ast_tree:
             return constants
         
-        # Ищем переменные верхнего уровня
+        # Ищем переменные верхнего уровня ТОЛЬКО в tree.body
+        # AST гарантирует, что tree.body содержит только верхний уровень
         for node in self.ast_tree.body:
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        # Получаем исходный код присваивания полностью
-                        start_line = node.lineno - 1  # AST использует 1-based индексацию
+                        # AST знает точные границы!
+                        start_line = node.lineno
+                        end_line = getattr(node, 'end_lineno', start_line)
                         
-                        # Определяем конец присваивания
-                        if hasattr(node, 'end_lineno') and node.end_lineno:
-                            end_line = node.end_lineno  # end_lineno уже 1-based
-                        else:
-                            # Для однострочных присваиваний
-                            end_line = node.lineno
-                        
-                        # Извлекаем код из исходного файла (lines использует 0-based индексацию)
-                        if self.lines and start_line < len(self.lines):
-                            # end_line уже 1-based (например, 10 означает строку 10)
-                            # start_line уже 0-based (node.lineno - 1, например, 9 для строки 10)
-                            # Для среза [start:end] end не включается, поэтому нужно end_line+1 (1-based -> 0-based)
-                            # end_line (1-based) = end_line (0-based для среза), но нужно включить, поэтому +1
-                            assignment_code = '\n'.join(self.lines[start_line:end_line+1])
+                        # Извлекаем код ТОЧНО по границам AST
+                        if self.lines and start_line <= len(self.lines):
+                            # end_line уже 1-based, start_line тоже 1-based
+                            # Для среза нужен 0-based, поэтому start_line - 1
+                            # end_line уже 1-based, но для среза нужно включить, поэтому просто end_line
+                            assignment_code = '\n'.join(self.lines[start_line - 1:end_line])
                             
-                            # Убираем лишние пробелы в начале, но сохраняем структуру
+                            # ВАЖНО: Проверяем, что константа верхнего уровня
+                            # Если константа верхнего уровня, она НЕ должна иметь отступов
+                            # Проверяем первую строку кода (не пустую и не комментарий)
                             code_lines = assignment_code.split('\n')
-                            if code_lines:
-                                # Находим минимальный отступ
-                                non_empty_lines = [l for l in code_lines if l.strip()]
-                                if non_empty_lines:
-                                    min_indent = min(len(l) - len(l.lstrip()) for l in non_empty_lines)
-                                    # Убираем минимальный отступ
-                                    assignment_code = '\n'.join(l[min_indent:] if len(l) > min_indent else l for l in code_lines)
+                            first_code_line = None
+                            for line in code_lines:
+                                stripped = line.strip()
+                                if stripped and not stripped.startswith('#'):
+                                    first_code_line = line
+                                    break
+                            
+                            # Если первая строка кода имеет отступ - это не верхний уровень
+                            if first_code_line and first_code_line[0] in [' ', '\t']:
+                                # Это не верхний уровень - пропускаем
+                                continue
                         else:
-                            # Если не удалось получить код, пытаемся извлечь значение
-                            value_part = self._get_value_repr(node.value)
-                            assignment_code = f"{target.id} = {value_part}"
+                            # Если не удалось получить код, пропускаем
+                            continue
                         
                         constants.append({
                             'name': target.id,
-                            'value': assignment_code,  # Сохраняем полный код присваивания
-                            'line': node.lineno,
-                            'code': assignment_code  # Сохраняем код
+                            'line': start_line,
+                            'end_line': end_line,  # Сохраняем end_line для проверки покрытия!
+                            'code': assignment_code
                         })
         
         return constants
+    
+    def get_usages(self, component_name: str, code: str) -> List[str]:
+        """
+        Анализ использований компонента (класса/функции/константы) в коде
+        
+        Args:
+            component_name: Имя компонента для поиска
+            code: Код для анализа
+            
+        Returns:
+            List[str]: Список использованных компонентов
+        """
+        if not code:
+            return []
+        
+        try:
+            # Парсим код в AST
+            tree = ast.parse(code)
+            usages = []
+            
+            # Собираем все имена в коде
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name):
+                    # Проверяем, что это не присваивание (ctx=Store)
+                    if isinstance(node.ctx, ast.Load):
+                        usages.append(node.id)
+                elif isinstance(node, ast.Attribute):
+                    # Обрабатываем атрибуты (например, Class.method)
+                    attr_name = self._get_attr_name(node)
+                    # Извлекаем базовое имя (до первой точки)
+                    if '.' in attr_name:
+                        base_name = attr_name.split('.')[0]
+                        usages.append(base_name)
+            
+            # Фильтруем только уникальные использования
+            return list(set(usages))
+        except Exception as e:
+            # Если не удалось распарсить, возвращаем пустой список
+            return []
+    
+    def get_all_usages(self) -> Dict[str, List[str]]:
+        """
+        Анализ всех использований классов, функций и констант в коде
+        
+        Returns:
+            Dict[str, List[str]]: Словарь {component_name: [used_components]}
+        """
+        if not self.ast_tree:
+            return {}
+        
+        # Собираем все имена компонентов
+        all_components = {}
+        for cls in self.get_classes():
+            all_components[cls['name']] = cls['code']
+        for func in self.get_functions():
+            all_components[func['name']] = func['code']
+        for const in self.get_constants():
+            all_components[const['name']] = const.get('code', '')
+        
+        # Анализируем использования для каждого компонента
+        usages = {}
+        for component_name, component_code in all_components.items():
+            component_usages = self.get_usages(component_name, component_code)
+            # Фильтруем только те использования, которые есть в списке компонентов
+            filtered_usages = [u for u in component_usages if u in all_components and u != component_name]
+            if filtered_usages:
+                usages[component_name] = filtered_usages
+        
+        return usages
     
     def get_structure(self) -> Dict[str, Any]:
         """
@@ -249,6 +336,7 @@ class CodeParser:
             'classes': self.get_classes(),
             'functions': self.get_functions(),
             'constants': self.get_constants(),
+            'usages': self.get_all_usages(),  # Добавляем анализ использований
             'total_lines': len(self.lines) if self.lines else 0
         }
     

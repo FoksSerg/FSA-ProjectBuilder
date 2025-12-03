@@ -13,6 +13,7 @@ import os
 import threading
 import logging
 import time
+import json
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
@@ -38,6 +39,13 @@ class MainWindow:
         self.logger = None
         self.preview_rebuild_text = None
         self.preview_build_text = None
+        
+        # Путь к файлу настроек
+        self.settings_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            ".fsa_projectbuilder_settings.json"
+        )
+        
         self._init_logging()
         self._init_gui()
     
@@ -82,7 +90,6 @@ class MainWindow:
         try:
             self.root = tk.Tk()
             self.root.title(f"{APP_NAME} v{APP_VERSION}")
-            self.root.geometry("1000x700")
             self.root.minsize(800, 600)
             
             # Инициализируем переменные после создания root
@@ -91,14 +98,53 @@ class MainWindow:
             self.output_dir = tk.StringVar()
             self.status_text = tk.StringVar(value="Готов к работе")
             
+            # Загружаем сохраненные настройки
+            settings = self._load_settings()
+            
+            # Восстанавливаем размер и позицию окна
+            if settings:
+                geometry = settings.get('geometry', '1000x700')
+                position = settings.get('position', None)
+                if position:
+                    geometry = f"{geometry}+{position['x']}+{position['y']}"
+                self.root.geometry(geometry)
+                
+                # Восстанавливаем поля
+                if settings.get('project_dir'):
+                    self.project_dir.set(settings['project_dir'])
+                if settings.get('main_file'):
+                    self.main_file.set(settings['main_file'])
+                if settings.get('output_dir'):
+                    self.output_dir.set(settings['output_dir'])
+            else:
+                # Используем значения по умолчанию
+                self.root.geometry("1000x700")
+                self._center_window()
+            
+            # Добавляем отслеживание изменений полей для автосохранения
+            self.project_dir.trace_add('write', lambda *args: self._save_settings_delayed())
+            self.main_file.trace_add('write', lambda *args: self._save_settings_delayed())
+            self.output_dir.trace_add('write', lambda *args: self._save_settings_delayed())
+            
+            # Делаем окно поверх всех на 3 секунды
+            self.root.attributes('-topmost', True)
+            self.root.after(3000, lambda: self.root.attributes('-topmost', False))
+            
+            # Обработчик закрытия окна
+            self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+            
+            # Отслеживаем изменение размера и позиции окна
+            self.root.bind('<Configure>', self._on_window_configure)
+            
             # Создаем меню
             self._create_menu()
             
             # Создаем основной интерфейс
             self._create_main_interface()
             
-            # Центрируем окно
-            self._center_window()
+            # Если настройки не были загружены, центрируем окно
+            if not settings:
+                self._center_window()
             
         except ImportError as e:
             print(f"[ERROR] Ошибка импорта: {e}")
@@ -275,6 +321,86 @@ class MainWindow:
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'{width}x{height}+{x}+{y}')
+    
+    def _load_settings(self) -> Optional[dict]:
+        """Загрузка настроек из файла"""
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    if self.logger:
+                        self.logger.debug(f"Настройки загружены из {self.settings_file}")
+                    return settings
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Не удалось загрузить настройки: {e}")
+            else:
+                print(f"[WARNING] Не удалось загрузить настройки: {e}")
+        return None
+    
+    def _save_settings(self):
+        """Сохранение настроек в файл"""
+        try:
+            if not self.root:
+                return
+            
+            # Получаем текущую геометрию окна
+            geometry = self.root.geometry()
+            # Парсим геометрию: "widthxheight+x+y" или "widthxheight"
+            parts = geometry.split('+')
+            size_part = parts[0]
+            position = None
+            
+            if len(parts) > 1:
+                position = {
+                    'x': int(parts[1]),
+                    'y': int(parts[2])
+                }
+            
+            # Создаем словарь настроек
+            settings = {
+                'geometry': size_part,
+                'position': position,
+                'project_dir': self.project_dir.get() if self.project_dir else '',
+                'main_file': self.main_file.get() if self.main_file else '',
+                'output_dir': self.output_dir.get() if self.output_dir else ''
+            }
+            
+            # Сохраняем в файл
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+            
+            if self.logger:
+                self.logger.debug(f"Настройки сохранены в {self.settings_file}")
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Не удалось сохранить настройки: {e}")
+            else:
+                print(f"[WARNING] Не удалось сохранить настройки: {e}")
+    
+    def _on_closing(self):
+        """Обработчик закрытия окна"""
+        # Сохраняем настройки перед закрытием
+        self._save_settings()
+        if self.logger:
+            self.logger.info("Приложение закрыто")
+        self.root.destroy()
+    
+    def _save_settings_delayed(self):
+        """Отложенное сохранение настроек (для автосохранения при изменении полей)"""
+        if not self.root:
+            return
+        if hasattr(self, '_save_timer'):
+            self.root.after_cancel(self._save_timer)
+        self._save_timer = self.root.after(500, self._save_settings)  # Сохраняем через 500мс после последнего изменения
+    
+    def _on_window_configure(self, event):
+        """Обработчик изменения размера и позиции окна"""
+        # Сохраняем настройки только если это главное окно (не дочерние виджеты)
+        if event.widget == self.root:
+            # Используем after для отложенного сохранения (чтобы не сохранять при каждом движении мыши)
+            self._save_settings_delayed()
     
     def _select_project(self):
         """Выбор директории проекта"""

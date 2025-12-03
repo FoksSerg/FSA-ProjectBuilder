@@ -68,7 +68,17 @@ def main():
     # Определяем целевую директорию
     target_dir = args.target
     if args.project and not target_dir:
-        target_dir = os.path.join(args.project, 'modules')
+        # Исправлено: Modules с большой буквы (как в правильно разобранном проекте)
+        target_dir = os.path.join(os.path.abspath(args.project), 'Modules')
+    elif target_dir:
+        # Преобразуем относительный путь в абсолютный
+        if not os.path.isabs(target_dir):
+            if args.project:
+                target_dir = os.path.join(os.path.abspath(args.project), target_dir)
+            else:
+                target_dir = os.path.abspath(target_dir)
+        else:
+            target_dir = os.path.abspath(target_dir)
     
     # Выполняем разборку
     print(f"[INFO] Исходный файл: {source_file}")

@@ -82,27 +82,89 @@ class DependencyResolver:
     
     def _analyze_classes(self):
         """Анализ зависимостей классов"""
+        # Собираем все имена компонентов для проверки
+        all_component_names = set()
+        for cls in self.structure.get('classes', []):
+            all_component_names.add(cls['name'])
+        for func in self.structure.get('functions', []):
+            all_component_names.add(func['name'])
+        for const in self.structure.get('constants', []):
+            all_component_names.add(const['name'])
+        
+        # Получаем анализ использований из парсера
+        usages = self.structure.get('usages', {})
+        
         for cls in self.structure.get('classes', []):
             cls_name = cls['name']
             dependencies = set()
             
             # Зависимости от базовых классов
             for base in cls.get('bases', []):
-                dependencies.add(base)
+                # Проверяем, что базовый класс есть в проекте
+                if base in all_component_names:
+                    dependencies.add(base)
             
-            # Зависимости от импортов (упрощенно)
-            # В будущем можно анализировать использование в методах
+            # Зависимости из анализа использований
+            if cls_name in usages:
+                for used in usages[cls_name]:
+                    if used in all_component_names:
+                        dependencies.add(used)
+            
+            # Анализируем код класса для поиска использований
+            cls_code = cls.get('code', '')
+            if cls_code:
+                # Ищем использования других компонентов в коде класса
+                import re
+                for component_name in all_component_names:
+                    if component_name == cls_name:
+                        continue
+                    # Ищем использование компонента в коде (не в комментариях)
+                    pattern = r'\b' + re.escape(component_name) + r'\b'
+                    if re.search(pattern, cls_code):
+                        # Проверяем, что это не просто часть другого имени
+                        # (например, ComponentHandler не должен совпадать с Handler)
+                        if component_name not in dependencies:
+                            dependencies.add(component_name)
             
             self.dependencies[cls_name] = list(dependencies)
     
     def _analyze_functions(self):
         """Анализ зависимостей функций"""
+        # Собираем все имена компонентов для проверки
+        all_component_names = set()
+        for cls in self.structure.get('classes', []):
+            all_component_names.add(cls['name'])
+        for func in self.structure.get('functions', []):
+            all_component_names.add(func['name'])
+        for const in self.structure.get('constants', []):
+            all_component_names.add(const['name'])
+        
+        # Получаем анализ использований из парсера
+        usages = self.structure.get('usages', {})
+        
         for func in self.structure.get('functions', []):
             func_name = func['name']
             dependencies = set()
             
-            # Анализ аргументов и использования (упрощенно)
-            # В будущем можно анализировать тело функции
+            # Зависимости из анализа использований
+            if func_name in usages:
+                for used in usages[func_name]:
+                    if used in all_component_names:
+                        dependencies.add(used)
+            
+            # Анализируем код функции для поиска использований
+            func_code = func.get('code', '')
+            if func_code:
+                # Ищем использования других компонентов в коде функции
+                import re
+                for component_name in all_component_names:
+                    if component_name == func_name:
+                        continue
+                    # Ищем использование компонента в коде (не в комментариях)
+                    pattern = r'\b' + re.escape(component_name) + r'\b'
+                    if re.search(pattern, func_code):
+                        if component_name not in dependencies:
+                            dependencies.add(component_name)
             
             self.dependencies[func_name] = list(dependencies)
     

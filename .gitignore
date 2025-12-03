@@ -53,3 +53,9 @@ test_built*.py
 # Logs directory
 Logs/
 *.log
+
+# Settings file
+.fsa_projectbuilder_settings.json
+
+# Test directory
+TEST/
